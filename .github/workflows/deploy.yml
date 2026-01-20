@@ -38,9 +38,12 @@ jobs:
           clean: false
 
       - name: Create .env from secrets
+        shell: bash
+        env: 
+          ProductionSecrets: ${{ secrets.PRODUCTION_SECRETS }}
         run: |
           echo "🔐 Creating .env file..."
-          echo "${{ secrets.PRODUCTION_SECRETS }}" | tr -d '\r' > .env
+          echo "$ProductionSecrets" | tr -d '\r' > .env
           
           # Verify .env was created and has content
           if [ ! -f .env ] || [ ! -s .env ]; then
