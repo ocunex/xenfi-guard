@@ -1,0 +1,167 @@
+
+name: Deploy XenFi Guard Production
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip health checks'
+        required: false
+        type: boolean
+      force_rebuild:
+        description: 'Force complete rebuild'
+        required: false
+        type: boolean
+
+env:
+  PROJECT_DIR: .
+  COMPOSE_FILE: docker-compose.yml
+  HEALTH_CHECK_TIMEOUT: 300
+  SERVICE_START_TIMEOUT: 120
+
+jobs:
+  deploy:
+    runs-on: "production"
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ./${{ env.PROJECT_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          clean: false
+
+      - name: Create .env from secrets
+        run: |
+          echo "🔐 Creating .env file..."
+          echo "${{ secrets.PRODUCTION_SECRETS }}" | tr -d '\r' > .env
+          
+          # Verify .env was created and has content
+          if [ ! -f .env ] || [ ! -s .env ]; then
+            echo "❌ ERROR: .env file was not created or is empty"
+            exit 1
+          fi
+          
+          echo "✅ .env file created"
+
+      - name: Clean Docker environment
+        run: |
+          echo "🧹 Docker cleanup..."
+          echo "📊 Current Docker state:"
+          docker system df
+          
+          echo "🧽 Standard cleanup..."
+          # Remove only stopped containers and dangling images
+          docker container prune -f
+          docker image prune -f
+          
+          # Always clean networks
+          docker network prune -f
+          
+          echo "📊 Disk space after cleanup:"
+          df -h / | grep -E '^/|^Filesystem' || true
+
+      - name: Build and start services
+        run: |
+          echo "🔨 Building and starting services..."
+          
+          # Pull latest base images
+          docker compose pull --quiet
+          
+          # Build strategy based on input
+          if [ "${{ github.event.inputs.force_rebuild }}" = "true" ]; then
+            echo "🔄 Force rebuild - building without cache..."
+            docker compose build --no-cache --pull --progress=plain
+          else
+            echo "⚡ Standard build - using cache when possible..."
+            docker compose build --pull
+          fi
+          
+          # Start services
+          echo "🚀 Starting services..."
+          docker compose up -d --remove-orphans --force-recreate
+          
+          # Show starting state
+          echo "📋 Services starting:"
+          docker compose ps
+
+      - name: Verify deployment
+        if: github.event.inputs.skip_tests != 'true'
+        run: |
+          echo "✅ Running deployment verification..."
+          
+          # Check if all expected services are running
+          echo "📋 Service status:"
+          docker compose ps
+          
+          # Check App Directly
+          echo "🔍 Checking app connectivity..."
+          sleep 10
+          
+          # Extract port from .env or default to 3000
+          PORT=$(grep "^PORT=" .env | cut -d '=' -f2 | tr -d '\r' || echo "3000")
+          # Handle case where PORT might be empty even if grep matched line (e.g. PORT=)
+          if [ -z "$PORT" ]; then PORT=3000; fi
+          
+          echo "Checking port: $PORT"
+
+          if command -v curl >/dev/null 2>&1; then
+            if curl -sI http://localhost:$PORT | grep -q "200 OK"; then
+              echo "✅ App is reachable 200 OK"
+            else
+              echo "⚠️ App connectivity check returned non-200. Check logs."
+            fi
+          else
+             echo "⚠️ curl not found, skipping HTTP check."
+          fi
+
+      - name: Post-deployment cleanup
+        if: always()
+        run: |
+          echo "🧹 Post-deployment cleanup..."
+          docker image prune -f
+          
+          echo -e "\n📊 Final Docker system state:"
+          docker system df
+          
+          echo -e "\n🐳 Running containers:"
+          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+      - name: Show service logs
+        if: always()
+        run: |
+          echo "📋 Recent service logs (last 30 lines)..."
+          
+          # Include known services in logs
+          services=("xenfi-guard")
+          
+          for service in "${services[@]}"; do
+            if docker compose ps --services | grep -q "^${service}$"; then
+              echo -e "\n🔍 === $service logs ==="
+              docker compose logs --tail=30 --timestamps "$service" || echo "Could not get logs for $service"
+            fi
+          done
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo -e "\n🎯 DEPLOYMENT SUMMARY"
+          echo "===================="
+          echo "📅 Completed at: $(date)"
+          echo "🌿 Branch: ${{ github.ref_name }}"
+          echo "📝 Commit: ${{ github.sha }}"
+          echo "👤 Triggered by: ${{ github.actor }}"
+          
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ Status: SUCCESS"
+            echo "🚀 XenFi Guard App is now running"
+          else
+            echo "❌ Status: FAILED"
+            echo "🔍 Check logs above for details"
+          fi

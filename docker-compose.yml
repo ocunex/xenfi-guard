@@ -1,0 +1,16 @@
+
+version: '3'
+services:
+  xenfi-guard:
+    build: .
+    container_name: xenfi-guard
+    restart: always
+    ports:
+      - "${PORT}:${PORT}"
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - .env
+    # Volumes if you need persistent storage for uploads/etc not currently used but good to have ready
+    # volumes:
+    #   - ./uploads:/app/public/uploads
