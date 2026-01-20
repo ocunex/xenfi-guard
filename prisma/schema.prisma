@@ -1,0 +1,80 @@
+datasource db {
+    provider = "postgresql"
+}
+
+generator client {
+    provider        = "prisma-client"
+    output          = "../generated/prisma"
+    previewFeatures = []
+}
+
+enum PeerStatus {
+    ACTIVE
+    REVOKED
+}
+
+enum ConfigType {
+    FULL_TUNNEL
+    SPLIT_TUNNEL
+}
+
+model Peer {
+    id            String     @id @default(cuid())
+    name          String
+    userLabel     String?
+    publicKey     String
+    tunnelIp      String
+    allowedIps    String
+    configType    ConfigType
+    status        PeerStatus @default(ACTIVE)
+    notes         String?
+    routerPeerId  String?
+    routerComment String?
+
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    lastSeen  DateTime?
+    rxBytes   BigInt?
+    txBytes   BigInt?
+
+    activityLogs PeerActivityLog[]
+
+    interfaceId String
+    wgInterface WireGuardInterface @relation(fields: [interfaceId], references: [id], onDelete: Cascade)
+    privateKey  String? // For Backend-Generated keys (Option A)
+}
+
+model WireGuardInterface {
+    id               String  @id @default(cuid())
+    name             String  @unique
+    listenPort       Int
+    tunnelCidr       String
+    serverTunnelIp   String
+    defaultDns       String
+    defaultKeepalive Int     @default(25)
+    publicKey        String
+    privateKey       String // Server private key
+    endpointHost     String? // Optional override for endpoint host
+
+    peers Peer[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+enum ActivityType {
+    CREATED
+    UPDATED
+    REVOKED
+    ROUTER_SYNC
+    CONFIG_GENERATED
+}
+
+model PeerActivityLog {
+    id        String       @id @default(cuid())
+    peer      Peer         @relation(fields: [peerId], references: [id], onDelete: Cascade)
+    peerId    String
+    type      ActivityType
+    message   String
+    createdAt DateTime     @default(now())
+}
